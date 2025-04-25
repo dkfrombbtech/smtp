@@ -16,7 +16,7 @@ CORS(app)
 # Hardcoded constants
 SENDER_EMAIL = "noreply.bytebandits@gmail.com"
 APP_PASSWORD = "zurx cpxz tucp ktjf"
-DEFAULT_SUBJECT = "Greetings from Byte Bandits."
+DEFAULT_SUBJECT = "Welcome to bytebandits"
 
 # Template paths
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "Templates")
