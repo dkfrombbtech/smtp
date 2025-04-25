@@ -60,7 +60,7 @@ def send_email():
 
         # Prepare the admin email
         admin_html_content = FROMUSER_TEMPLATE.format(name=name, email=recipient_email, phone=phone, message=message)
-        admin_subject = f"Email from User {name} signed up using the email {recipient_email}"
+        admin_subject = f"Email from Website {name} signed up using the email {recipient_email}"
 
         # Send emails
         send_html_email(SENDER_EMAIL, recipient_email, user_subject, user_html_content)
