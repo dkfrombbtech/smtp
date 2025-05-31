@@ -6,41 +6,56 @@ import time
 import os
 import re
 import logging
+import threading
 
-# Configure logging
 logging.basicConfig(level=logging.DEBUG)
+
+SENDER_EMAIL = "noreply.bytebandits@gmail.com"
+APP_PASSWORD = "zurx cpxz tucp ktjf"
 
 app = Flask(__name__)
 CORS(app)
 
-# Hardcoded constants
-SENDER_EMAIL = "noreply.bytebandits@gmail.com"
-APP_PASSWORD = "zurx cpxz tucp ktjf"
-DEFAULT_SUBJECT = "Thank You for Reaching Out"
-
-# Template paths
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "Templates")
-ADMIN_EMAIL_TEMPLATE_PATH = os.path.join(TEMPLATES_DIR, "admin_email.html")
-USER_EMAIL_TEMPLATE_PATH = os.path.join(TEMPLATES_DIR, "user_email.html")
+TEMPLATE_PATHS = {
+    "contact_user": os.path.join(TEMPLATES_DIR, "user_email.html"),
+    "contact_admin": os.path.join(TEMPLATES_DIR, "admin_email.html"),
+    "job_application": os.path.join(TEMPLATES_DIR, "job_application.html")
+}
 
-# Load HTML templates with error handling
-try:
-    with open(ADMIN_EMAIL_TEMPLATE_PATH, "r") as file:
-        ADMIN_EMAIL_TEMPLATE = file.read()
-except Exception as e:
-    logging.error(f"Error loading admin email template: {e}")
-    ADMIN_EMAIL_TEMPLATE = ""
-
-try:
-    with open(USER_EMAIL_TEMPLATE_PATH, "r") as file:
-        USER_EMAIL_TEMPLATE = file.read()
-except Exception as e:
-    logging.error(f"Error loading user email template: {e}")
-    USER_EMAIL_TEMPLATE = ""
+TEMPLATES = {}
+for key, path in TEMPLATE_PATHS.items():
+    try:
+        with open(path, "r") as file:
+            TEMPLATES[key] = file.read()
+    except Exception as e:
+        logging.error(f"Error loading template {key}: {e}")
+        TEMPLATES[key] = ""
 
 def is_valid_email(email):
-    """Basic regex for validating an email address."""
     return re.match(r"[^@]+@[^@]+\.[^@]+", email)
+
+def send_html_email(sender, recipient, subject, html_content):
+    try:
+        msg = EmailMessage()
+        msg["From"] = sender
+        msg["To"] = recipient
+        msg["Subject"] = subject
+        msg.set_content("This email contains HTML content.")
+        msg.add_alternative(html_content, subtype="html")
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(sender, APP_PASSWORD)
+            server.send_message(msg)
+
+        logging.info(f"Email sent to {recipient}")
+    except Exception as e:
+        logging.error(f"Sending failed: {e}")
+
+def send_html_email_async(sender, recipient, subject, html_content):
+    thread = threading.Thread(target=send_html_email, args=(sender, recipient, subject, html_content))
+    thread.start()
 
 @app.route("/send-email", methods=["POST"])
 def send_email():
@@ -49,69 +64,72 @@ def send_email():
         if not data:
             return jsonify({"error": "No data provided"}), 400
 
-        # Extract inputs
-        first_name = data.get("first_name")
-        last_name = data.get("last_name", "")  # Optional field
-        email = data.get("email")
-        phone = data.get("phone", "Not provided")  # Optional field
-        subject = data.get("subject", "No subject provided")
+        template_type = data.get("template_type", "contact")
 
-        if not first_name or not email or not is_valid_email(email):
-            return jsonify({"error": "First Name, Email (valid) and Subject are required"}), 400
-
-        full_name = f"{first_name} {last_name}".strip()
-        
-        # Generate unique ID and timestamp per request
         unique_id = "BB-" + str(int(time.time()))
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
-        # Prepare the user email content
-        if USER_EMAIL_TEMPLATE:
-            user_html_content = USER_EMAIL_TEMPLATE.format(name=full_name, unique_id=unique_id, timestamp=timestamp)
+        if template_type == "contact":
+            first_name = data.get("first_name")
+            last_name = data.get("last_name", "")
+            email = data.get("email")
+            phone = data.get("phone", "Not provided")
+            subject = data.get("subject", "No subject provided")
+            full_name = f"{first_name} {last_name}".strip()
+
+            if not first_name or not email or not is_valid_email(email):
+                return jsonify({"error": "First name and valid email are required."}), 400
+
+            user_html = TEMPLATES["contact_user"].format(name=full_name, unique_id=unique_id, timestamp=timestamp)
+            admin_html = TEMPLATES["contact_admin"].format(name=full_name, email=email, phone=phone, subject=subject, unique_id=unique_id, timestamp=timestamp)
+
+            send_html_email_async(SENDER_EMAIL, email, "Thank You for Reaching Out", user_html)
+            send_html_email_async(SENDER_EMAIL, "bbtechworks@gmail.com", f"New Contact Request - {full_name}", admin_html)
+
+        elif template_type == "job_application":
+            full_name = data.get("full_name")
+            email = data.get("email")
+            position = data.get("position")
+            date_applied = data.get("date")
+
+            if not full_name or not email or not position or not date_applied:
+                return jsonify({"error": "All fields are required for job applications."}), 400
+            if not is_valid_email(email):
+                return jsonify({"error": "Invalid email address."}), 400
+
+            user_html = TEMPLATES["job_application"].format(
+                full_name=full_name,
+                position=position,
+                date=date_applied,
+                unique_id=unique_id,
+                timestamp=timestamp
+            )
+
+            send_html_email_async(SENDER_EMAIL, email, "Application Received", user_html)
+
         else:
-            return jsonify({"error": "Error loading user email template"}), 500
+            return jsonify({"error": "Invalid template type."}), 400
 
-        user_subject = DEFAULT_SUBJECT
-
-        # Prepare the admin email content
-        if ADMIN_EMAIL_TEMPLATE:
-            admin_html_content = ADMIN_EMAIL_TEMPLATE.format(name=full_name, email=email, phone=phone, subject=subject)
-        else:
-            return jsonify({"error": "Error loading admin email template"}), 500
-
-        admin_subject = f"New Contact Request - {full_name} from {email}"
-
-        # Send emails
-        send_html_email(SENDER_EMAIL, email, user_subject, user_html_content)
-        send_html_email(SENDER_EMAIL, "bbtechworks@gmail.com", admin_subject, admin_html_content)
-
-        logging.info(f"Emails sent to {email} and admin.")
-
-        return jsonify({"message": "Emails sent successfully!"}), 200
+        return jsonify({"message": "Email(s) sending in background."}), 200
 
     except Exception as e:
         logging.error(f"Error: {e}")
         return jsonify({"error": str(e)}), 500
 
-def send_html_email(sender, recipient, subject, html_content):
-    """Send an HTML email."""
-    try:
-        msg = EmailMessage()
-        msg["From"] = sender
-        msg["To"] = recipient
-        msg["Subject"] = subject
-        msg.set_content("This email contains HTML content. Please view it in an email client that supports HTML.")
-        msg.add_alternative(html_content, subtype="html")
-
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(sender, APP_PASSWORD)
-            server.send_message(msg)
-
-        logging.info(f"Email sent to {recipient} with subject {subject}")
-    except Exception as e:
-        logging.error(f"Error sending email: {e}")
-        raise
+@app.route("/", methods=["GET"])
+def home():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Byte Bandits Email API</title>
+    </head>
+    <body style="font-family: Arial, sans-serif; text-align: center; padding-top: 50px;">
+        <h1>Byte Bandits Email API</h1>
+        <p>Status: <strong style="color: green;">Working ✅</strong></p>
+    </body>
+    </html>
+    """
 
 if __name__ == "__main__":
     app.run(debug=True)
